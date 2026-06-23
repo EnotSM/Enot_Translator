@@ -14,7 +14,7 @@ Instead of blindly feeding text to an LLM, the script has a few built-in safety 
 
 ### Setup Requirements
 
-You need [Ollama](https://ollama.com) installed. For the best balance of speed and quality right now in 2026, I highly recommend using **`qwen3:14b`** (`ollama pull qwen3:14b`).
+You need [Ollama](https://ollama.com) installed. For the best balance of speed and quality right now in 2026, I highly recommend using **`qwen3:14b`** (`ollama pull qwen3:14b`).(req 10GB VRAM)
 
 **Option 1: Standard Linux**
 Make sure your system has Qt6 Wayland support installed (e.g., `qt6-wayland`), then run:
@@ -41,4 +41,3 @@ Using the tool is super straightforward:
 5. Hit "Start / Resume".
 
 *⚠️ **Note:** Local LLMs are great, but they aren't perfect. Even with the built-in auto-repair checks, you might still occasionally run into translation mistakes or weird phrasing.*
-(all of this was also wrote by gemini lol)
