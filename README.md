@@ -26,8 +26,7 @@ Translate entire `.epub` and `.txt` books using local LLMs via **Ollama** — no
 
 ## 📸 Demo
 
-<!-- TODO: Add screen recording GIF -->
-![screenshot](<img width="2519" height="1360" alt="Screenshot from 2026-06-29 19-42-07" src="https://github.com/user-attachments/assets/82e31101-6205-496b-9687-ab135ca1ddb3" />)
+![screenshot](https://github.com/user-attachments/assets/82e31101-6205-496b-9687-ab135ca1ddb3)
 
 ## 🚀 Quick Start
 
