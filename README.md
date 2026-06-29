@@ -6,7 +6,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue?logo=python)](https://www.python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![tests](https://img.shields.io/badge/tests-18%20passed-brightgreen)](#-testing)
+[![tests](https://github.com/EnotSM/Enot_Translator/actions/workflows/tests.yml/badge.svg)](https://github.com/EnotSM/Enot_Translator/actions/workflows/tests.yml)
 
 Translate entire `.epub` and `.txt` books using local LLMs via **Ollama** — no data leaves your computer, no API bills, no internet required.
 
