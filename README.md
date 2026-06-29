@@ -64,7 +64,7 @@ Progress is saved automatically — you can pause and resume anytime.
 ## 🧪 Running Tests
 
 ```bash
-python -m pytest test_enot_translator.py -v
+python -m unittest discover -v
 ```
 
 ## 🏗️ Architecture
