@@ -2,6 +2,7 @@
 
 import sys
 import os
+import re
 import time
 import json
 import threading
@@ -9,12 +10,15 @@ import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple
 
+from constants import LANGUAGES, CONTEXT_SIZES, STYLESHEET, CYRILLIC_LANGUAGES, VALID_EXTENSIONS
+
 if "QT_QPA_PLATFORM" not in os.environ:
     os.environ["QT_QPA_PLATFORM"] = "wayland"
 os.environ.setdefault("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1")
 
+log_level = logging.DEBUG if "--debug" in sys.argv else logging.WARNING
 logging.basicConfig(
-    level=logging.WARNING,
+    level=log_level,
     format='%(asctime)s [%(levelname)s] %(message)s',
     datefmt='%H:%M:%S'
 )
@@ -36,41 +40,30 @@ try:
         QFileDialog, QLineEdit, QSpinBox, QGroupBox, QSplitter,
         QMessageBox, QFrame
     )
-    from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
+    from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSettings
     from PyQt6.QtGui import QTextCursor, QCloseEvent
 except ImportError:
     print("❌ Missing dependency: PyQt6")
     sys.exit(1)
 
-LANGUAGES = [
-    "", "English 🇬🇧", "Ukrainian 🇺🇦", "Russian 🇺🇦", "German 🇩🇪", "French 🇫🇷",
-    "Spanish 🇪🇸", "Italian 🇮🇹", "Polish 🇵🇱", "Portuguese 🇵🇹", "Dutch 🇳🇱",
-    "Swedish 🇸🇪", "Czech 🇨🇿", "Greek 🇬🇷", "Romanian 🇷🇴", "Hungarian 🇭🇺",
-    "Bulgarian 🇧🇬", "Danish 🇩🇰", "Finnish 🇫🇮", "Norwegian 🇳🇴", "Slovak 🇸🇰",
-    "Croatian 🇭🇷", "Lithuanian 🇱🇹", "Slovenian 🇸🇮", "Latvian 🇱🇻", "Estonian 🇪🇪"
-]
+def repair_json(raw: str) -> str:
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[-1]
+        raw = raw.rsplit("```", 1)[0]
+        raw = raw.strip()
+    first_brace = raw.find("{")
+    last_brace = raw.rfind("}")
+    first_bracket = raw.find("[")
+    last_bracket = raw.rfind("]")
+    if first_brace != -1 and last_brace > first_brace:
+        raw = raw[first_brace:last_brace + 1]
+    elif first_bracket != -1 and last_bracket > first_bracket:
+        raw = raw[first_bracket:last_bracket + 1]
+    raw = re.sub(r',\s*}', '}', raw)
+    raw = re.sub(r',\s*]', ']', raw)
+    return raw
 
-CONTEXT_SIZES = ["2048", "4096", "8192", "16384", "32768"]
-
-STYLESHEET = """
-QMainWindow, QWidget { background: #0f1117; color: #e2e8f0; font-family: 'monospace'; font-size: 13px; }
-QGroupBox { border: 1px solid #1e2d3d; border-radius: 10px; margin-top: 14px; padding: 14px 12px 10px 12px; font-weight: 600; color: #38bdf8; text-transform: uppercase; }
-QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 14px; padding: 0 6px; background: #0f1117; }
-QPushButton { background: #0ea5e9; color: #0f1117; border: none; border-radius: 7px; padding: 8px 20px; font-weight: 700; }
-QPushButton:hover { background: #38bdf8; }
-QPushButton:disabled { background: #1e2d3d; color: #475569; }
-QPushButton#cancel { background: #1e293b; color: #f87171; border: 1px solid #7f1d1d; }
-QPushButton#cancel:hover { background: #7f1d1d; color: #fff; }
-QPushButton#small { background: #1e293b; color: #94a3b8; padding: 6px 12px; font-size: 12px; border: 1px solid #1e2d3d; }
-QPushButton#small:hover { background: #0ea5e9; color: #0f1117; }
-QLineEdit, QSpinBox, QComboBox { background: #0d1520; border: 1px solid #1e2d3d; border-radius: 7px; padding: 7px 11px; color: #e2e8f0; }
-QComboBox QAbstractItemView { background: #0d1520; color: #e2e8f0; selection-background-color: #0ea5e9; }
-QProgressBar { background: #0d1520; border: 1px solid #1e2d3d; border-radius: 7px; text-align: center; color: #94a3b8; height: 22px; }
-QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0ea5e9, stop:1 #38bdf8); border-radius: 6px; }
-QTextEdit { background: #080d14; border: 1px solid #1e2d3d; border-radius: 8px; padding: 10px; color: #4ade80; }
-QLabel { color: #94a3b8; }
-QLabel#hero { color: #38bdf8; font-size: 22px; font-weight: 800; }
-"""
 
 class OllamaClient:
     def __init__(self, base_url: str = "http://localhost:11434"):
@@ -96,7 +89,7 @@ class OllamaClient:
         except Exception as e:
             logger.error(f"Failed to flush cache for {model}: {e}")
 
-    def translate_batch(self, texts: List[str], src_lang: str, tgt_lang: str, model: str, context_size: int, cancel_event: Optional[threading.Event] = None, timeout: int = 300) -> List[str]:
+    def translate_batch(self, texts: List[str], src_lang: str, tgt_lang: str, model: str, context_size: int, cancel_event: Optional[threading.Event] = None, timeout: int = 300, progress_callback: Optional[callable] = None) -> List[str]:
         if not texts:
             return []
 
@@ -133,7 +126,7 @@ class OllamaClient:
                     timeout=timeout,
                 )
                 r.raise_for_status()
-                data = json.loads(r.json().get("response", "{}"))
+                data = json.loads(repair_json(r.json().get("response", "{}")))
                 translations = data.get("translations", [])
                 
                 if len(translations) == len(texts):
@@ -149,18 +142,22 @@ class OllamaClient:
         if cancel_event and cancel_event.is_set():
             return []
             
-        return self._translate_isolated(texts, src_lang, tgt_lang, model, context_size, cancel_event)
+        return self._translate_isolated(texts, src_lang, tgt_lang, model, context_size, cancel_event, progress_callback)
 
-    def _translate_isolated(self, texts: List[str], src_lang: str, tgt_lang: str, model: str, context_size: int, cancel_event: Optional[threading.Event] = None) -> List[str]:
+    def _translate_isolated(self, texts: List[str], src_lang: str, tgt_lang: str, model: str, context_size: int, cancel_event: Optional[threading.Event] = None, progress_callback: Optional[callable] = None) -> List[str]:
         isolated_results = []
-        for text in texts:
+        total = len(texts)
+        for i, text in enumerate(texts):
             if cancel_event and cancel_event.is_set():
                 break
-                
+
+            if progress_callback:
+                progress_callback(i + 1, total)
+
             if not text.strip():
                 isolated_results.append(text)
                 continue
-                
+
             prompt = f"Translate this text directly from {src_lang} to {tgt_lang}. Output only the translation.\n\nText:\n{text}"
             try:
                 r = self.session.post(
@@ -260,12 +257,11 @@ class TranslationWorker(QThread):
         t = trans.strip()
         if not o or not t:
             return False
-        
+
         if o == t and len(o) > 15 and any(c.isalpha() for c in o):
             return True
-            
-        cyrillic_targets = ["Russian 🇺🇦", "Ukrainian 🇺🇦", "Bulgarian 🇧🇬"]
-        if not any(lang in self.tgt_lang for lang in cyrillic_targets):
+
+        if self.tgt_lang not in CYRILLIC_LANGUAGES:
             if any('\u0400' <= c <= '\u04FF' for c in t):
                 return True
         return False
@@ -306,10 +302,6 @@ class TranslationWorker(QThread):
         try:
             ext = Path(self.in_path).suffix.lower()
             
-            estimated_tokens = self.batch_sz * 150
-            if estimated_tokens > self.context_size * 0.75:
-                self.sig_log.emit("⚠️ Warning: Batch size may exceed context. Reduce batch or increase context.")
-
             if ext == '.epub':
                 self._translate_epub(client)
             else:
@@ -346,7 +338,21 @@ class TranslationWorker(QThread):
 
             batch_counter += 1
             texts_to_translate = [text for _, text in batch]
-            
+
+            total_chars = sum(len(t) for t in texts_to_translate)
+            estimated_tokens = total_chars // 3
+            if estimated_tokens > self.context_size:
+                self.sig_log.emit(f"⚠️ Batch {batch_counter}: ~{estimated_tokens} tokens exceeds context ({self.context_size}). Truncating may occur.")
+
+            completed_before_batch = completed_segs
+
+            def on_isolated_progress(current, total):
+                self.sig_progress.emit(
+                    completed_before_batch + current,
+                    total_segments,
+                    f"Isolated fallback {completed_before_batch + current}/{total_segments}"
+                )
+
             try:
                 res = client.translate_batch(
                     texts_to_translate, 
@@ -354,7 +360,8 @@ class TranslationWorker(QThread):
                     self.tgt_lang, 
                     self.model,
                     self.context_size,
-                    self._cancel
+                    self._cancel,
+                    progress_callback=on_isolated_progress
                 )
                 
                 if self._cancel.is_set():
@@ -368,8 +375,9 @@ class TranslationWorker(QThread):
                         
                     translated_map[uid] = trans_text
             except Exception as exc:
-                self.sig_log.emit(f"⚠️ Batch error: {exc}")
+                self.sig_log.emit(f"⚠️ Batch {batch_counter} failed: {exc}")
                 for uid, orig_text in batch:
+                    self.sig_log.emit(f"   ⚠️ Segment {uid} kept as-is (batch error)")
                     translated_map[uid] = orig_text
 
             self._save_checkpoint(translated_map)
@@ -408,7 +416,9 @@ class TranslationWorker(QThread):
         for idx_str, trans_text in translated_map.items():
             idx = int(idx_str)
             orig_line = lines[idx]
-            out_lines[idx] = orig_line.replace(orig_line.strip(), trans_text, 1)
+            prefix = orig_line[:len(orig_line) - len(orig_line.lstrip())]
+            suffix = orig_line[len(orig_line.rstrip()):]
+            out_lines[idx] = prefix + trans_text + suffix
 
         with open(self.out_path, 'w', encoding='utf-8') as f:
             f.writelines(out_lines)
@@ -453,9 +463,9 @@ class TranslationWorker(QThread):
                 uid = f"{item_id}::{idx}"
                 if uid in translated_map:
                     original_text = str(node)
-                    stripped_text = original_text.strip()
-                    new_text = original_text.replace(stripped_text, translated_map[uid], 1)
-                    node.replace_with(new_text)
+                    prefix = original_text[:len(original_text) - len(original_text.lstrip())]
+                    suffix = original_text[len(original_text.rstrip()):]
+                    node.replace_with(prefix + translated_map[uid] + suffix)
                     modified = True
                     
             if modified:
@@ -471,23 +481,26 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.worker: Optional[TranslationWorker] = None
         self.fetcher_worker: Optional[ModelFetcherWorker] = None
-        
+        self.settings = QSettings("EnotTranslator", "EnotTranslator")
+
         self.setWindowTitle("Enot Translator")
         self.setMinimumSize(1020, 720)
         self.setStyleSheet(STYLESHEET)
-        
+
         self._build_interface_layout()
+        self._load_settings()
         QTimer.singleShot(200, self._trigger_model_fetch)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self._save_settings()
         if self.worker and self.worker.isRunning():
             self.worker.cancel()
             self.worker.wait()
-            
+
         if self.fetcher_worker and self.fetcher_worker.isRunning():
             self.fetcher_worker.quit()
             self.fetcher_worker.wait()
-            
+
         event.accept()
 
     def _build_interface_layout(self) -> None:
@@ -670,6 +683,27 @@ class MainWindow(QMainWindow):
         self.model_selection_combo.clear()
         self.server_status.setStyleSheet("color: #ef4444;")
 
+    def _load_settings(self) -> None:
+        self.server_url_input.setText(self.settings.value("server_url", "http://localhost:11434"))
+        self.source_lang_combo.setCurrentText(self.settings.value("source_lang", ""))
+        self.target_lang_combo.setCurrentText(self.settings.value("target_lang", ""))
+        self.batch_size_spin.setValue(int(self.settings.value("batch_size", 10)))
+        context = self.settings.value("context_size", "4096")
+        idx = self.context_combo.findText(context)
+        if idx >= 0:
+            self.context_combo.setCurrentIndex(idx)
+        geo = self.settings.value("geometry")
+        if geo:
+            self.restoreGeometry(geo)
+
+    def _save_settings(self) -> None:
+        self.settings.setValue("server_url", self.server_url_input.text())
+        self.settings.setValue("source_lang", self.source_lang_combo.currentText())
+        self.settings.setValue("target_lang", self.target_lang_combo.currentText())
+        self.settings.setValue("batch_size", self.batch_size_spin.value())
+        self.settings.setValue("context_size", self.context_combo.currentText())
+        self.settings.setValue("geometry", self.saveGeometry())
+
     def _post_log_message(self, text: str) -> None:
         self.console_output.append(f'<span style="color:#4ade80">[{time.strftime("%H:%M:%S")}] {text}</span>')
         self.console_output.moveCursor(QTextCursor.MoveOperation.End)
@@ -678,7 +712,12 @@ class MainWindow(QMainWindow):
         if not self.input_field.text() or not self.output_field.text():
             QMessageBox.warning(self, "Error", "Select input and output files.")
             return
-            
+
+        in_ext = Path(self.input_field.text()).suffix.lower()
+        if in_ext not in VALID_EXTENSIONS:
+            QMessageBox.warning(self, "Error", f"Unsupported format '{in_ext}'. Use .txt or .epub.")
+            return
+
         if not self.source_lang_combo.currentText() or not self.target_lang_combo.currentText():
             QMessageBox.warning(self, "Error", "Select source and target languages.")
             return
@@ -741,7 +780,8 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Error", error_message)
 
 def main() -> None:
-    app = QApplication(sys.argv)
+    argv = [a for a in sys.argv if a != "--debug"]
+    app = QApplication(argv)
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
